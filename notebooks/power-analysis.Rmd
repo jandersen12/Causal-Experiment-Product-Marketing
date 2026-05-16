@@ -1,0 +1,206 @@
+---
+title: "241 Power Analysis Assignment"
+output:
+  pdf_document:
+    latex_engine: xelatex
+author: "Jordan Andersen, Indri Adisoemarta, Maia Kennedy, Jane Li"
+date: "2025-06-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r install packages, echo=FALSE}
+library(data.table)
+library(broom)
+library(ggplot2)
+```
+
+#### Defining Simulation Parameters
+
+Our study examines the individual and combined effects of personalization (accurate, inaccurate, and none), bundling, and discounting on customer purchase behavior. For the power analysis, we compare the effects of three hypothetical increases in purchase amounts (5%, 10%, and 15%) when customers are exposed to accurate personalization, bundling, and discounting, relative to a baseline with no personalization, no bundling, and no discounting.
+
+The 5-15% range is based on prior research indicating that personalization can increase revenue by 10-15% (Arora et al., 2021). Evidence for the impact of bundling is mixed, ranging from modest gains (1-2%) to negative effects, so we chose not to include bundling in our combined effect estimate. Discounting, by contrast, has been shown to raise average order value by approximately 13-21% (Jha et al., 2024).
+
+```{r define simulation parameters}
+n_simulations <- 1000
+alpha <- 0.05
+effect_sizes <- c(0.05, 0.10, 0.15)
+sample_sizes <- c(500, 1000, 1500, 2000, 2500)
+```
+
+```{r initialize results}
+results <- data.table(expand.grid(
+  n_subjects = sample_sizes,
+  effect_size = effect_sizes
+))
+results[, power := NA_real_]
+```
+
+#### Simulating Base Data
+
+We conducted a 3x2x2 multifactorial experiment to examine the effects of bundling, personalization, and discounting on user purchase behavior. In this experiment, bundling is a binary factor (0 = no bundle, 1 = bundled offer), personalization is a three-level categorical factor (none, accurate, inaccurate) and discount is a binary factor (0 = no discount, 1 = discount applied).
+
+This results in 12 experimental conditions. To simulate this, we created a base dataset where each user is randomly assigned to one of the treatment combinations. The base purchase amount was set at $30 to reflect the expected average value of items ($10–$100 range) that would be used in the experimental raffle. To introduce variability in purchasing behavior, we added normally distributed noise (mean = 0, SD = 5) to the base amount, resulting in a purchase_amt outcome that approximates natural variation in spending. This setup allows us to test for main effects and interactions among bundling, personalization accuracy, and discount availability on purchase behavior under a sharp null hypothesis.
+
+```{r create base data}
+make_base_data <- function(n) {
+  d <- data.table(id = 1:n)
+  
+  # Create factor placeholders
+  d[, bundle := sample(c(0,1), .N, replace = TRUE)]
+  d[, personalization := sample(c("none", "accurate", "inaccurate"), .N, replace = TRUE)]
+  d[, discount := sample(c(0,1), .N, replace = TRUE)]
+  
+  # Create personalization factor
+  d[, personalization := factor(personalization, levels = c("none", "accurate", "inaccurate"))]
+  
+  # Create base outcome to be observed under sharp null hypothesis
+  d[, purchase_amt := 30 + rnorm(.N, mean = 0, sd = 5)]
+  
+  return(d)
+}
+```
+
+#### Running the Simulation
+
+Our sharp null hypothesis ($H_0$) states that none of the experimental treatments will have any effect on purchase amount. In other words, under $H_0$, the outcome variable (purchase_amt) would remain unchanged regardless of the treatment group assignment. We will test the power of our experimental design using a randomized simulation where participants are randomly assigned to one of these 12 groups, ensuring that the treatment assignment is unbiased and that potential confounding variables are equally distributed across conditions. To estimate treatment effects and test hypotheses, we use a linear regression model that incorporates the factors in the $H_a$ of interest.
+ 
+This model allows us to estimate the individual contributions of each factor, capture interaction effects, which are central to our research question, and simulate and assess the power of our experimental design to detect meaningful differences, especially in the case of accurate/inaccurate personalized bundles offered with or without a discount. By comparing estimated coefficients to the sharp null, we can evaluate whether and how personalization, bundling, and discounting influence user purchase behavior.
+
+
+```{r run simulation loop}
+for (i in 1:nrow(results)) {
+  n <- results$n_subjects[i]
+  effect <- results$effect_size[i]
+  p_values <- numeric(n_simulations)
+  
+  # Keep outcome the same for all simulations
+  base_data <- make_base_data(n)
+  
+  for (sim in 1:n_simulations) {
+    d <- copy(base_data)
+    
+    # Conduct randomization across all groups (12)
+    d[, bundle := sample(c(0,1), .N, replace = TRUE)]
+    d[, personalization := sample(c("none", "accurate", "inaccurate"), .N, replace = TRUE)]
+    d[, personalization := factor(personalization, levels = c("none", "accurate", "inaccurate"))]
+    d[, discount := sample(c(0,1), .N, replace = TRUE)]
+    
+    # Create effect for a 3-way interaction (bundle × accurate personalization × discount)
+    d[bundle == 1 & personalization == "accurate" & discount == 1,
+      purchase_amt := purchase_amt * (1 + effect)]
+    
+    # Create linear regression model with all factors and combinations
+    model <- lm(purchase_amt ~ bundle * personalization * discount, data = d)
+    model_summary <- tidy(model)
+    
+    # Calculate p-values
+    term <- "bundle:personalizationaccurate:discount"
+    p_values[sim] <- model_summary$p.value[model_summary$term == term]
+  }
+  
+  # Estimate power
+  results$power[i] <- mean(p_values < alpha, na.rm = TRUE)
+}
+```
+
+#### Interpreting the results
+
+\begin{align*}
+\hat{Y} =\ & 30.12 
++ 0.12 \cdot \text{bundle}
+- 0.072 \cdot \text{accurate}
+- 0.001 \cdot \text{inaccurate} \\
+& - 0.738 \cdot \text{discount}
++ 0.078 \cdot (\text{bundle} \times \text{accurate}) \\
+& - 0.662 \cdot (\text{bundle} \times \text{inaccurate})
++ 0.285 \cdot (\text{bundle} \times \text{discount}) \\
+& + 0.973 \cdot (\text{accurate} \times \text{discount})
+- 0.114 \cdot (\text{inaccurate} \times \text{discount}) \\
+& + 3.345 \cdot (\text{bundle} \times \text{accurate} \times \text{discount}) \\
+& + 0.606 \cdot (\text{bundle} \times \text{inaccurate} \times \text{discount})
+\end{align*}
+
+
+The only **3-way interaction** of `bundle × accurate personalization × discount` is statistically significant. When all three are applied (bundle = 1, accurate personalization, discount = 1), purchase increases significantly by \~3.35 units beyond the individual effects themselves and any 2-way interactions.
+
+```{r, include = TRUE, echo=FALSE}
+summary(model)
+```
+
+#### Understanding Effect Size and Sample Needs
+
+The results suggest it's very hard to detect small effects (0.05) with a sample size of 2500. For a medium effect size (0.1), a sample size of 2500 can achieve 80% power. For a large effect size (0.15), a sample of 1000 reaches ~80% power. In short, the sample needs will largely depend on the true effect size.
+
+```{r , echo=FALSE}
+knitr::kable(results, digits = 3, caption = "Estimated Power by Sample Size and Effect Size")
+```
+
+```{r visualize effect x power, incude = TRUE}
+ggplot(results, aes(x = n_subjects, y = power, color = factor(effect_size * 100))) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") + ### designate 80% threshold
+  labs(
+    title = "Power to Detect 3-Way Interaction: Bundle × Personalization × Discount",
+    x = "Sample Size",
+    y = "Estimated Power",
+    color = "Effect Size (%)"
+  )
+```
+
+### Dispersion test
+
+```{r dispersion test}
+# Define sample sizes and noise levels
+sample_sizes <- c(500, 1000, 1500, 2000, 2500)
+noise_levels <- c(0.5, 3, 5)
+effect_size <- 0.1  # 10% effect size
+n_simulations <- 1000
+alpha <- 0.05
+
+# Initialize results data frame
+results <- expand.grid(n = sample_sizes, noise_sd = noise_levels)
+results$power <- NA_real_
+
+for(i in 1:nrow(results)) {
+  n <- results$n[i]
+  noise_sd <- results$noise_sd[i]
+  p_values <- numeric(n_simulations)
+
+  for(sim in 1:n_simulations) {
+    d <- data.table(id = 1:n)
+    d[, bundle := sample(c(0,1), .N, replace = TRUE)]
+    d[, personalization := sample(c("none", "accurate", "inaccurate"), .N, replace = TRUE)]
+    d[, personalization := factor(personalization, levels = c("none", "accurate", "inaccurate"))]
+    d[, discount := sample(c(0,1), .N, replace = TRUE)]
+
+    # Generate outcome with specified noise
+    d[, purchase_amt := 30 + rnorm(n, mean = 0, sd = noise_sd)]
+
+    # Apply 3-way interaction effect only for the specified group
+    d[bundle == 1 & personalization == "accurate" & discount == 1, 
+      purchase_amt := purchase_amt * (1 + effect_size)]
+
+    # Fit linear regression
+    model <- lm(purchase_amt ~ bundle * personalization * discount, data = d)
+    model_summary <- tidy(model)
+    p_values[sim] <- model_summary$p.value[model_summary$term == "bundle:personalizationaccurate:discount"]
+  }
+
+  results$power[i] <- mean(p_values < alpha, na.rm = TRUE)
+  cat("Completed n:", n, "noise_sd:", noise_sd, "power:", round(results$power[i], 3), "\n")
+}
+results
+```
+
+### Interpretation of dispersion result
+
+From the result, at low noise (noise = 2), increasing sample greatly improve statistical power. When noise =5, statistical power increases with large samples (>=2000). However, when noise is high (>=10), sample increase has very small impact on power gains. To achieve high statistical power (~0.8) for detecting 3 way interactions, it requires either very low noise (noise<=2) with sample sie >=500, or moderate noise(noise = 5) with sample size >=2000.
+
+#### References
+Arora, N., Ensslen, D., Fiedler, L., Liu, W. W., Robinson, K., Stein, E., & Schüler, G. (2021, November 12). The value of getting personalization right—or wrong—is multiplying. McKinsey & Company. https://www.mckinsey.com/capabilities/growth-marketing-and-sales/our-insights/the-value-of-getting-personalization-right-or-wrong-is-multiplying
+
+Jha, S., Gauri, D., Guha, A., & Biswas, A. (2024, June 7). Research: Smaller, more precise discounts could increase your sales. Harvard Business Review. https://hbr.org/2024/06/research-smaller-more-precise-discounts-could-increase-your-sales

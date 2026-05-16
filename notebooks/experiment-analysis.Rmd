@@ -1,0 +1,281 @@
+---
+title: "Jordan-Analysis"
+output: html_document
+date: "2025-08-03"
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r load packages, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+```
+
+## Distribution of outcome variable
+
+```{r outcome distribution}
+d_subset <- read.csv('data/data.csv')
+
+hist(d_subset$purchase_amount,
+     breaks = c(20),
+     main = 'Distribution of Purchase Amounts',
+     xlab = 'Purchase Amount',
+     col = 'darkcyan')
+```
+
+## Statistical Analysis
+
+### Group means
+
+```{r group means}
+group_means <- d_subset[ , .(mean_purchase_amt = mean(purchase_amount)), 
+                  keyby = PresentationType]
+
+group_means
+```
+
+*Note*: Just observing the averages for each treatment assignment group, it looks like the Generic_Individual group actually has the highest average purchase amount, with Accurate_Bundle having the lowest average purchase amount. 
+
+### Regressions of group means for purchase amount
+
+Regression of treatment group means
+
+```{r regression of means}
+# relevel groups to set baseline comparison
+d_subset$PresentationType <- as.factor(d_subset$PresentationType)
+
+d_subset$PresentationType <- relevel(d_subset$PresentationType, ref = 'Generic_Individual')
+
+model_means <- lm(purchase_amount ~ PresentationType, data = d_subset)
+
+stargazer(model_means, type = 'text', 
+          title = 'Results: Purchase Amount by Treatment Group',
+          dep.var.labels = 'Purchase Amount',
+          covariate.labels = c('Accurate Bundle', 'Accurate Individual', 'Generic Bundle',
+                               'Inaccurate Bundle', 'Inaccurate Individual', 
+                               'Constant (Generic Individual)'),
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE)
+```
+
+
+*Note*: None of the results appear to be statistically significant. The regression does confirm that those in the Generic_Individual group (the intercept reference group) spent more than other groups. Those in the Generic_Bundle group (non-personalized bundle) spent about `r round(model_simple$coefficients[2], 2)` less than the baseline, and those in the Accurate_Bundle (personalized bundle) group spent about `r round(model_simple$coefficients[4], 2)` less than the baseline. 
+
+#### With demographics
+
+```{r demographic regression of means}
+model_demographics <- lm(purchase_amount ~ PresentationType + Age + Gender, data = d_subset)
+
+stargazer(model_means, model_demographics,
+          type = 'text',
+          title = 'Results: Purchase Amount by Treatment Group with Demographics',
+          dep.var.labels = 'Purchase Amount',
+          covariate.labels = c('Accurate Bundle', 'Accurate Individual', 'Generic Bundle',
+                               'Inaccurate Bundle', 'Inaccurate Individual'),
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE,
+          omit = c("Age", "Gender"),
+          notes = c("Model 2 represents controls for age and gender.")
+)
+```
+
+
+### Regression of bundling and personalization interaction for purchase amount
+
+```{r interaction regression}
+d_subset <- d_subset %>% #create Personalization_Treatment column
+  mutate(Personalization_Treatment = sub("_.*", "", PresentationType))
+
+d_subset$bundle <- factor(d_subset$bundle, levels = c(0, 1))  # 0 = reference
+d_subset$Personalization_Treatment <- relevel(factor(d_subset$Personalization_Treatment), ref = "Generic")
+
+model_full <- lm(purchase_amount ~ bundle*Personalization_Treatment, data = d_subset)
+robust_se1 <- sqrt(diag(vcovHC(model_full, type = 'HC1')))
+
+stargazer(model_full, type = 'text', 
+          title = 'Results: Effects of Bundling and Personalization',
+          dep.var.labels = 'Purchase Amount',
+          se = list(robust_se1),
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE)
+```
+
+#### With demographics
+
+```{r interaction regression with demographics}
+model_full_demographics <- lm(purchase_amount ~ bundle*Personalization_Treatment + Age + Gender + Q15, data = d_subset)
+robust_se2 <- sqrt(diag(vcovHC(model_full_demographics, type = "HC1")))
+
+stargazer(model_full, model_full_demographics,
+          type = 'text', 
+          title = 'Results: Effects of Bundling and Personalization',
+          dep.var.labels = 'Purchase Amount',
+          se = list(robust_se2),
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE,
+          omit = c("Age", "Gender", "Q15"),
+          notes = c("Model 2 represents controls for age and gender."))
+```
+
+```{r}
+anova(model_full, model_full_demographics)
+```
+
+## All regressions for purchase amount
+
+```{r full regression}
+######### Prepare dataset ######### 
+d_subset <- d_subset %>% #create Personalization_Treatment column
+  mutate(Personalization_Treatment = sub("_.*", "", PresentationType))
+
+d_subset$bundle <- factor(d_subset$bundle, levels = c(0, 1))  # 0 = reference
+d_subset$Personalization_Treatment <- relevel(factor(d_subset$Personalization_Treatment), ref = "Generic")
+
+######### bundling model ######### 
+model_bundling <- d_subset[, lm(purchase_amount ~ bundle)]
+bundling_rse <- sqrt(diag(vcovHC(model_bundling, type="HC1")))
+
+##########  personalization model ######### 
+model_personalization <- d_subset[, lm(purchase_amount ~ Personalization_Treatment)]
+personalization_rse <- sqrt(diag(vcovHC(model_personalization, type="HC1")))
+
+##########  Interaction model ######### 
+model_full <- lm(purchase_amount ~ bundle*Personalization_Treatment, data = d_subset)
+full_rse <- sqrt(diag(vcovHC(model_full, type = 'HC1')))
+
+##########  Interaction with demographics ######### 
+model_full_demographics <- lm(purchase_amount ~ bundle*Personalization_Treatment + Age + Gender + Q15, data = d_subset)
+demographics_rse <- sqrt(diag(vcovHC(model_full_demographics, type = "HC1")))
+
+
+######### Stargazer ######### 
+stargazer(model_bundling, model_personalization, model_full, model_full_demographics,
+          se = list(bundling_rse, personalization_rse, full_rse, demographics_rse),
+          type = 'text', 
+          title = 'Results: Effects of Bundling and Personalization',
+          dep.var.labels = 'Purchase Amount',
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE,
+          omit = c("Age", "Gender", "Q15"),
+          notes = c("Model 4 represents same interaction as Model 3 between bundling and personalization with the addition of controls for age, gender and income."))
+```
+
+```{r}
+anova(model_bundling, model_personalization, model_full, model_full_demographics)
+
+```
+
+## Regressions for binary purchase outcome (yes= 1, no= 0)
+
+```{r}
+# Binary outcome column
+d_subset$if_purchase <- ifelse(d_subset$purchase_amount > 0, 1, 0)
+
+# Models
+model_bundle_y2 <- glm(if_purchase ~ bundle, data = d_subset, family = binomial(link = "logit"))
+
+model_personalization_y2 <- glm(if_purchase ~ Personalization_Treatment, data = d_subset, family = binomial(link = "logit"))
+
+model_full_y2 <- glm(if_purchase ~ Personalization_Treatment * bundle, data = d_subset, family = binomial(link = "logit"))
+
+model_full_demographics_y2 <- glm(if_purchase ~ Personalization_Treatment * bundle + Age + Gender + Q15, data = d_subset, family = binomial(link = "logit"))
+
+# Function to get robust SE safely
+robust_se <- function(model) {
+  sqrt(diag(vcovHC(model, type = "HC1")))
+}
+
+# Fit models (after cleaning data)
+model_list <- list(
+  model_bundle_y2,
+  model_personalization_y2,
+  model_full_y2,
+  model_full_demographic_y2
+)
+
+# Calculate SEs
+se_list <- lapply(model_list, robust_se)
+
+# Output
+stargazer(model_list, se = se_list,
+          type = "text",
+          title = "Logistic Regression Results with Robust SE",
+          dep.var.labels = "Any purchase (1=yes, 0=no)",
+          digits = 3, 
+          header = FALSE,
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE,
+          omit = c("Age", "Gender", "Q15"),
+          notes = c("Model 4 represents same interaction as Model 3 between bundling and personalization with the addition of controls for age, gender and income."))
+
+```
+
+## Full table purchase and binary outcome
+
+```{r}
+###### Define models #####
+outcome_y1_models <- list(model_bundling, model_personalization,
+                          model_full, model_full_demographics)
+outcome_y2_models <- list(model_bundle_y2, model_personalization_y2,
+                          model_full_y2, model_full_demographic_y2)
+
+all_models <- c(outcome_y1_models, outcome_y2_models)
+
+##### Robust SEs #####
+se_list_all <- lapply(all_models, robust_se) # apply function from above
+
+##### Stargazer table #####
+stargazer(all_models,
+          se = se_list_all,
+          type = 'text',
+          title = "Effects on Purchase Amount and Likelihood of Purchase",
+          column.labels = c('Purchase Amount', 'Any Purchase (logit)'),
+          column.separate = c(length(outcome_y1_models), length(outcome_y2_models)),
+          model.numbers = FALSE,
+          digits = 2,
+          ci = TRUE,
+          ci.level = 0.95,
+          omit = c('Age', 'Gender', 'Q15'),
+          notes = c(
+            "Robust (HC1) standard errors in parentheses; 95% confidence intervals shown.", "Columns 1–4: OLS on purchase amount (in currency units). Columns 5–8: Logistic regression on any purchase (1=yes, 0=no)."
+  ),
+  notes.align = "l")
+```
+
+
+## Appendix
+
+Non-causal interaction effect of perceived personalization and bundle on purchase amount.
+
+```{r simple model using indicator variables}
+model_encoded <- lm(purchase_amount ~ bundle*personalization, data = d_subset)
+summary(model_encoded)
+```
+
+
+```{r encoded model and demographics}
+# Non-causal interaction effect of perceived personalization and bundle on purchase amount
+model_encoded_demographics <- lm(purchase_amount ~ bundle*personalization + Age + Gender, data = d_subset)
+
+stargazer(model_encoded, model_encoded_demographics,
+          type = 'text',
+          title = 'Bundle and Personalization interaction with demographics',
+          dep.var.labels = 'Purchase Amount',
+          ci = TRUE,
+          font.size = 'large',
+          no.space = TRUE,
+          omit = c("Age", "Gender"),
+          notes = c("Model 2 represents controls for age and gender."))
+
+```
+
