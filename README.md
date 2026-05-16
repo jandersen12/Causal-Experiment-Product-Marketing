@@ -25,7 +25,7 @@ This study applies a 3x2 factorial experiment to test whether identity-based per
 
 | Dataset | Source | Description |
 |---------|--------|-------------|
-| data.csv | [data](#data) | Anonymized survey data from Qualtrics with 272 participants |
+| data.csv | [data](data/data.csv) | Anonymized survey data from Qualtrics with 272 participants |
 
 ### Data Column Dictionary
 
