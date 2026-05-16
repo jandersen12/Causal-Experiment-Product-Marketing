@@ -106,7 +106,7 @@ Our shopping environment featured six consumer technology products, selected for
 
 Our two outcome measures were (1) purchase amount and (2) purchase made (binary yes/no). We hypothesized that both personalization and bundling would independently increase total spending and that their combination would also produce a positive effect on spending.
 
-📄 [Full report (PDF)](docs/final-report.pdf)
+📄 [Full report (PDF)](docs/FINAL-REPORT.pdf)
 
 ## Results
 
